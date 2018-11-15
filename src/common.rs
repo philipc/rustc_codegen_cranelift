@@ -187,6 +187,9 @@ impl<'tcx> CValue<'tcx> {
                     layout.size.bytes(),
                     fx.tcx.data_layout.pointer_size.bytes() * 2
                 );
+                if layout.fields.count() < 2 {
+                    unimpl!("load_value_pair {:?}", layout);
+                }
                 let val1_offset = layout.fields.offset(0).bytes() as i32;
                 let val2_offset = layout.fields.offset(1).bytes() as i32;
                 let val1 = fx
