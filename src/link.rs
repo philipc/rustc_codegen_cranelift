@@ -65,7 +65,12 @@ pub(crate) fn link_rlib(sess: &Session, res: &CodegenResults, output_name: PathB
     }
 }
 
-pub(crate) fn link_bin(sess: &Session, codegen_results: &CodegenResults, out_filename: &Path) {
+pub(crate) fn link_natively(
+    sess: &Session,
+    crate_type: CrateType,
+    codegen_results: &CodegenResults,
+    out_filename: &Path,
+) {
     let tmpdir = match TempFileBuilder::new().prefix("rustc").tempdir() {
         Ok(tmpdir) => tmpdir,
         Err(err) => sess.fatal(&format!("couldn't create a temp dir: {}", err)),
@@ -110,7 +115,7 @@ pub(crate) fn link_bin(sess: &Session, codegen_results: &CodegenResults, out_fil
     {
         let target_cpu = "x86_64-apple-darwin"; //::llvm_util::target_cpu(sess);
         let mut linker = codegen_results.linker_info.to_linker(cmd, &sess, flavor, target_cpu);
-        link_args(&mut *linker, flavor, sess, CrateType::Executable, tmpdir.path(),
+        link_args(&mut *linker, flavor, sess, crate_type, tmpdir.path(),
                   out_filename, codegen_results);
         cmd = linker.finalize();
     }
