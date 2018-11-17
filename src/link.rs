@@ -1,7 +1,10 @@
+use std::ascii;
+use std::char;
 use std::env;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::str;
 
 use tempfile::Builder as TempFileBuilder;
 
@@ -77,6 +80,8 @@ pub(crate) fn link_natively(
     };
 
     let (linker, flavor) = linker_and_flavor(sess);
+
+    // The invocations of cc share some flags across platforms
     let (pname, mut cmd) = get_linker(sess, &linker, flavor);
 
     let root = sess.target_filesearch(PathKind::Native).get_lib_path();
@@ -93,11 +98,16 @@ pub(crate) fn link_natively(
     }
     cmd.args(&sess.opts.debugging_opts.pre_link_arg);
 
-    for obj in &sess.target.target.options.pre_link_objects_exe {
+    let pre_link_objects = if crate_type == config::CrateType::Executable {
+        &sess.target.target.options.pre_link_objects_exe
+    } else {
+        &sess.target.target.options.pre_link_objects_dll
+    };
+    for obj in pre_link_objects {
         cmd.arg(root.join(obj));
     }
 
-    if sess.crt_static() {
+    if crate_type == config::CrateType::Executable && sess.crt_static() {
         for obj in &sess.target.target.options.pre_link_objects_exe_crt {
             cmd.arg(root.join(obj));
         }
@@ -113,8 +123,8 @@ pub(crate) fn link_natively(
     }
 
     {
-        let target_cpu = "x86_64-apple-darwin"; //::llvm_util::target_cpu(sess);
-        let mut linker = codegen_results.linker_info.to_linker(cmd, &sess, flavor, target_cpu);
+        let target_cpu = ::target_lexicon::HOST.to_string();
+        let mut linker = codegen_results.linker_info.to_linker(cmd, &sess, flavor, &target_cpu);
         link_args(&mut *linker, flavor, sess, crate_type, tmpdir.path(),
                   out_filename, codegen_results);
         cmd = linker.finalize();
@@ -208,6 +218,16 @@ pub(crate) fn link_natively(
 
     match prog {
         Ok(prog) => {
+            fn escape_string(s: &[u8]) -> String {
+                str::from_utf8(s).map(|s| s.to_owned())
+                    .unwrap_or_else(|_| {
+                        let mut x = "Non-UTF-8 output: ".to_string();
+                        x.extend(s.iter()
+                                 .flat_map(|&b| ascii::escape_default(b))
+                                 .map(|b| char::from_u32(b as u32).unwrap()));
+                        x
+                    })
+            }
             if !prog.status.success() {
                 let mut output = prog.stderr.clone();
                 output.extend_from_slice(&prog.stdout);
@@ -215,7 +235,7 @@ pub(crate) fn link_natively(
                                          pname.display(),
                                          prog.status))
                     .note(&format!("{:?}", &cmd))
-                    .note(&String::from_utf8_lossy(&output))
+                    .note(&escape_string(&output))
                     .emit();
                 sess.abort_if_errors();
             }
