@@ -12,6 +12,7 @@ impl<F: Fn() -> String> Drop for PrintOnPanic<F> {
 pub fn trans_mono_item<'a, 'tcx: 'a>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     module: &mut Module<impl Backend>,
+    debug: Option<&mut DebugContext>,
     caches: &mut Caches<'tcx>,
     ccx: &mut crate::constant::ConstantCx,
     mono_item: MonoItem<'tcx>,
@@ -43,7 +44,7 @@ pub fn trans_mono_item<'a, 'tcx: 'a>(
                 }
             });
 
-            trans_fn(tcx, module, ccx, caches, inst);
+            trans_fn(tcx, module, debug, ccx, caches, inst);
         }
         MonoItem::Static(def_id) => {
             crate::constant::codegen_static(ccx, def_id);
@@ -57,6 +58,7 @@ pub fn trans_mono_item<'a, 'tcx: 'a>(
 fn trans_fn<'a, 'tcx: 'a>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     module: &mut Module<impl Backend>,
+    _debug: Option<&mut DebugContext>,
     constants: &mut crate::constant::ConstantCx,
     caches: &mut Caches<'tcx>,
     instance: Instance<'tcx>,
@@ -137,6 +139,9 @@ fn trans_fn<'a, 'tcx: 'a>(
         .define_function(func_id, &mut caches.context)
         .unwrap();
     caches.context.clear();
+
+    // Step 10. Define debuginfo??
+    // caches.context.func should have all the debug loc stuff?
 }
 
 fn verify_func(tcx: TyCtxt, writer: crate::pretty_clif::CommentWriter, func: &Function) {
@@ -653,7 +658,6 @@ fn trans_stmt<'a, 'tcx: 'a>(
         | StatementKind::StorageDead(_)
         | StatementKind::Nop
         | StatementKind::FakeRead(..)
-        | StatementKind::EndRegion(_)
         | StatementKind::Retag { .. }
         | StatementKind::AscribeUserType(..)
         | StatementKind::EscapeToRaw(..) => {}

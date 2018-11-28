@@ -20,7 +20,7 @@ use std::sync::mpsc;
 use rustc::dep_graph::DepGraph;
 use rustc::middle::cstore::MetadataLoader;
 use rustc::session::{
-    config::{OutputFilenames, OutputType},
+    config::{DebugInfo, OutputFilenames, OutputType},
     CompileIncomplete,
 };
 use rustc::ty::query::Providers;
@@ -42,6 +42,7 @@ mod archive;
 mod base;
 mod common;
 mod constant;
+mod debuginfo;
 mod intrinsics;
 mod link;
 mod link_copied;
@@ -87,12 +88,16 @@ mod prelude {
     pub use cranelift::codegen::isa::CallConv;
     pub use cranelift::codegen::Context;
     pub use cranelift::prelude::*;
-    pub use cranelift_module::{Backend, DataContext, DataId, FuncId, Linkage, Module};
+    pub use cranelift_module::{
+        self, Backend, DataContext, DataId, DebugSectionContext, DebugSectionId, DebugReloc, FuncId, FuncOrDataId, Linkage,
+        Module,
+    };
     pub use cranelift_simplejit::{SimpleJITBackend, SimpleJITBuilder};
 
     pub use crate::abi::*;
     pub use crate::base::{trans_operand, trans_place};
     pub use crate::common::*;
+    pub use crate::debuginfo::DebugContext;
     pub use crate::trap::*;
     pub use crate::unimpl::{unimpl, with_unimpl_span};
     pub use crate::Caches;
@@ -223,7 +228,7 @@ impl CodegenBackend for CraneliftCodegenBackend {
                 .declare_function("main", Linkage::Import, &sig)
                 .unwrap();
 
-            codegen_mono_items(tcx, &mut jit_module, &mut log);
+            codegen_mono_items(tcx, &mut jit_module, &mut None, &mut log);
 
             tcx.sess.abort_if_errors();
             println!("Compiled everything");
@@ -240,6 +245,8 @@ impl CodegenBackend for CraneliftCodegenBackend {
             jit_module.finish();
             ::std::process::exit(0);
         } else {
+            let address_size = isa.pointer_bytes();
+
             let mut faerie_module: Module<FaerieBackend> = Module::new(
                 FaerieBuilder::new(
                     isa,
@@ -254,7 +261,18 @@ impl CodegenBackend for CraneliftCodegenBackend {
                 faerie_module.target_config().pointer_type()
             );
 
-            codegen_mono_items(tcx, &mut faerie_module, &mut log);
+            let mut debug = if tcx.sess.opts.debuginfo != DebugInfo::None {
+                let debug = DebugContext::new(tcx, address_size, &mut faerie_module);
+                Some(debug)
+            } else {
+                None
+            };
+
+            codegen_mono_items(tcx, &mut faerie_module, &mut debug, &mut log);
+
+            if let Some(debug) = debug {
+                debug.emit(&mut faerie_module);
+            }
 
             tcx.sess.abort_if_errors();
 
@@ -318,6 +336,7 @@ impl CodegenBackend for CraneliftCodegenBackend {
 fn codegen_mono_items<'a, 'tcx: 'a>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     module: &mut Module<impl Backend + 'static>,
+    debug: &mut Option<DebugContext>,
     log: &mut Option<File>,
 ) {
     let mut caches = Caches::new();
@@ -335,7 +354,14 @@ fn codegen_mono_items<'a, 'tcx: 'a>(
 
     for (&mono_item, &(_linkage, _vis)) in mono_items {
         unimpl::try_unimpl(tcx, log, || {
-            base::trans_mono_item(tcx, module, &mut caches, &mut ccx, mono_item);
+            base::trans_mono_item(
+                tcx,
+                module,
+                debug.as_mut(),
+                &mut caches,
+                &mut ccx,
+                mono_item,
+            );
         });
     }
 
