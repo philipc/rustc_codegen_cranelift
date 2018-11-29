@@ -58,7 +58,7 @@ pub fn trans_mono_item<'a, 'tcx: 'a>(
 fn trans_fn<'a, 'tcx: 'a>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     module: &mut Module<impl Backend>,
-    _debug: Option<&mut DebugContext>,
+    debug: Option<&mut DebugContext>,
     constants: &mut crate::constant::ConstantCx,
     caches: &mut Caches<'tcx>,
     instance: Instance<'tcx>,
@@ -71,6 +71,7 @@ fn trans_fn<'a, 'tcx: 'a>(
     let func_id = module
         .declare_function(&name, Linkage::Export, &sig)
         .unwrap();
+    let debug_context = FunctionDebugContext::new(debug, &name, &sig);
 
     // Step 3. Make FunctionBuilder
     let mut func = Function::with_name_signature(ExternalName::user(0, 0), sig);
@@ -102,6 +103,7 @@ fn trans_fn<'a, 'tcx: 'a>(
         comments: HashMap::new(),
         constants,
         caches,
+        debug_context,
 
         top_nop: None,
     };
