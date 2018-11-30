@@ -71,7 +71,7 @@ fn trans_fn<'a, 'tcx: 'a>(
     let func_id = module
         .declare_function(&name, Linkage::Export, &sig)
         .unwrap();
-    let debug_context = FunctionDebugContext::new(debug, &name, &sig);
+    let mut debug_context = debug.map(|debug| FunctionDebugContext::new(tcx, debug, mir, &name, &sig));
 
     // Step 3. Make FunctionBuilder
     let mut func = Function::with_name_signature(ExternalName::user(0, 0), sig);
@@ -103,7 +103,7 @@ fn trans_fn<'a, 'tcx: 'a>(
         comments: HashMap::new(),
         constants,
         caches,
-        debug_context,
+        spans: Vec::new(),
 
         top_nop: None,
     };
@@ -113,6 +113,7 @@ fn trans_fn<'a, 'tcx: 'a>(
         crate::abi::codegen_fn_prelude(&mut fx, start_ebb);
         codegen_fn_content(&mut fx);
     });
+    let spans = fx.spans;
 
     // Step 7. Write function to file for debugging
     let mut writer = crate::pretty_clif::CommentWriter(fx.comments);
@@ -140,10 +141,8 @@ fn trans_fn<'a, 'tcx: 'a>(
     module
         .define_function(func_id, &mut caches.context)
         .unwrap();
+    debug_context.as_mut().map(|x| x.define(tcx, module, &caches.context, &spans[..]));
     caches.context.clear();
-
-    // Step 10. Define debuginfo??
-    // caches.context.func should have all the debug loc stuff?
 }
 
 fn verify_func(tcx: TyCtxt, writer: crate::pretty_clif::CommentWriter, func: &Function) {
@@ -187,6 +186,9 @@ fn codegen_fn_content<'a, 'tcx: 'a>(fx: &mut FunctionCx<'a, 'tcx, impl Backend>)
             .unwrap();
         let inst = fx.bcx.func.layout.last_inst(ebb).unwrap();
         fx.add_comment(inst, terminator_head);
+
+        // FIXME: probably need to call this in more places
+        fx.set_debug_loc(bb_data.terminator().source_info);
 
         match &bb_data.terminator().kind {
             TerminatorKind::Goto { target } => {
@@ -340,6 +342,8 @@ fn trans_stmt<'a, 'tcx: 'a>(
     stmt: &Statement<'tcx>,
 ) {
     let _print_guard = PrintOnPanic(|| format!("stmt {:?}", stmt));
+
+    fx.set_debug_loc(stmt.source_info);
 
     match &stmt.kind {
         StatementKind::StorageLive(..) | StatementKind::StorageDead(..) => {} // Those are not very useful

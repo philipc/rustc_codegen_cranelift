@@ -58,7 +58,7 @@ mod prelude {
     pub use std::collections::{HashMap, HashSet};
 
     pub use syntax::ast::{FloatTy, IntTy, UintTy};
-    pub use syntax::source_map::DUMMY_SP;
+    pub use syntax::source_map::{DUMMY_SP, Span, Pos};
 
     pub use rustc::bug;
     pub use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
@@ -83,7 +83,7 @@ mod prelude {
     pub use rustc_codegen_ssa::{CodegenResults, CompiledModule, ModuleKind};
 
     pub use cranelift::codegen::ir::{
-        condcodes::IntCC, function::Function, ExternalName, FuncRef, Inst, StackSlot,
+        condcodes::IntCC, function::Function, ExternalName, FuncRef, Inst, StackSlot, SourceLoc,
     };
     pub use cranelift::codegen::isa::CallConv;
     pub use cranelift::codegen::Context;
@@ -245,8 +245,6 @@ impl CodegenBackend for CraneliftCodegenBackend {
             jit_module.finish();
             ::std::process::exit(0);
         } else {
-            let address_size = isa.pointer_bytes();
-
             let mut faerie_module: Module<FaerieBackend> = Module::new(
                 FaerieBuilder::new(
                     isa,
@@ -262,6 +260,7 @@ impl CodegenBackend for CraneliftCodegenBackend {
             );
 
             let mut debug = if tcx.sess.opts.debuginfo != DebugInfo::None {
+                let address_size = faerie_module.isa().pointer_bytes();
                 let debug = DebugContext::new(tcx, address_size, &mut faerie_module);
                 Some(debug)
             } else {

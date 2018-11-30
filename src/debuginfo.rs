@@ -56,8 +56,6 @@ impl DebugContext {
         }
 
         let debug_abbrev_id = module.declare_debug_section(SectionId::DebugAbbrev.name()).unwrap();
-        tcx.sess
-            .warn(&format!("debug_abbrev_id {:?}", debug_abbrev_id));
         let debug_info_id = module.declare_debug_section(SectionId::DebugInfo.name()).unwrap();
         let debug_str_id = module.declare_debug_section(SectionId::DebugStr.name()).unwrap();
 
@@ -121,29 +119,61 @@ impl DebugContext {
     }
 }
 
-pub struct FunctionDebugContext {
+pub struct FunctionDebugContext<'a> {
+    debug_context: &'a mut DebugContext,
     entry_id: UnitEntryId,
 }
 
-impl FunctionDebugContext {
-    pub fn new(debug_context: Option<&mut DebugContext>, name: &str, _sig: &Signature) -> Option<Self> {
-        let debug_context = match debug_context {
-            Some(cx) => cx,
-            None => return None,
-        };
-
+impl<'a> FunctionDebugContext<'a> {
+    pub fn new(
+        tcx: TyCtxt,
+        debug_context: &'a mut DebugContext,
+        mir: &Mir,
+        name: &str,
+        _sig: &Signature,
+    ) -> Self {
         let unit = debug_context.units.get_mut(debug_context.unit_id);
         // FIXME: add to appropriate scope intead of root
         let scope = unit.root();
         let entry_id = unit.add(scope, gimli::DW_TAG_subprogram);
-        {
-            let entry = unit.get_mut(entry_id);
-            let name_id = debug_context.strings.add(name);
-            entry.set(gimli::DW_AT_linkage_name, AttributeValue::StringRef(name_id));
-        }
-        Some(FunctionDebugContext {
+        let entry = unit.get_mut(entry_id);
+        let name_id = debug_context.strings.add(name);
+        let loc = tcx.sess.source_map().lookup_char_pos(mir.span.lo());
+        // FIXME: use file index into unit's line table
+        // FIXME: specify directory too?
+        let file_id = debug_context.strings.add(loc.file.name.to_string());
+        entry.set(gimli::DW_AT_linkage_name, AttributeValue::StringRef(name_id));
+        entry.set(gimli::DW_AT_decl_file, AttributeValue::StringRef(file_id));
+        entry.set(gimli::DW_AT_decl_line, AttributeValue::Udata(loc.line as u64));
+        // FIXME: probably omit this
+        entry.set(gimli::DW_AT_decl_column, AttributeValue::Udata(loc.col.to_usize() as u64));
+        FunctionDebugContext {
+            debug_context,
             entry_id,
-        })
+        }
+    }
+
+    pub fn define(
+        &mut self,
+        tcx: TyCtxt,
+        module: &mut Module<impl Backend>,
+        context: &Context,
+        spans: &[Span],
+    ) {
+        let encinfo = module.isa().encoding_info();
+        let func = &context.func;
+        for ebb in func.layout.ebbs() {
+            for (offset, inst, _) in func.inst_offsets(ebb, &encinfo) {
+                let srcloc = func.srclocs[inst];
+                if !srcloc.is_default() {
+                    let span = spans[srcloc.bits() as usize];
+                    let loc = tcx.sess.source_map().lookup_char_pos(span.lo());
+                    let file = loc.file.name.to_string();
+                    tcx.sess
+                        .warn(&format!("srcloc {} {}:{}:{}", offset, file, loc.line, loc.col.to_usize()));
+                }
+            }
+        }
     }
 }
 
