@@ -95,6 +95,7 @@ fn trans_fn<'a, 'tcx: 'a>(
 
         bcx,
         ebb_map,
+        ret_param: None,
         local_map: HashMap::new(),
 
         comments: HashMap::new(),

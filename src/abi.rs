@@ -276,9 +276,8 @@ pub fn codegen_fn_prelude<'a, 'tcx: 'a>(
 ) {
     let ssa_analyzed = crate::analyze::analyze(fx);
 
-    let ret_layout = fx.layout_of(fx.return_type());
     let output_pass_mode = get_pass_mode(fx.tcx, fx.self_sig().abi, fx.return_type(), true);
-    let ret_param = match output_pass_mode {
+    fx.ret_param = match output_pass_mode {
         PassMode::NoPass => None,
         PassMode::ByVal(_) => None,
         PassMode::ByRef => Some(fx.bcx.append_ebb_param(start_ebb, fx.pointer_type)),
@@ -336,28 +335,6 @@ pub fn codegen_fn_prelude<'a, 'tcx: 'a>(
         let arg_ty = fx.monomorphize(&fx.mir.local_decls[local].ty);
         let pass_mode = get_pass_mode(fx.tcx, fx.self_sig().abi, arg_ty, false);
         fx.add_global_comment(format!("pass {:?}: {:?} {:?}", local, arg_ty, pass_mode));
-    }
-
-    match output_pass_mode {
-        PassMode::NoPass => {
-            let null = fx.bcx.ins().iconst(fx.pointer_type, 0);
-            //unimplemented!("pass mode nopass");
-            fx.local_map.insert(
-                RETURN_PLACE,
-                CPlace::Addr(null, None, fx.layout_of(fx.return_type())),
-            );
-        }
-        PassMode::ByVal(ret_ty) => {
-            fx.bcx.declare_var(mir_var(RETURN_PLACE), ret_ty);
-            fx.local_map
-                .insert(RETURN_PLACE, CPlace::Var(RETURN_PLACE, ret_layout));
-        }
-        PassMode::ByRef => {
-            fx.local_map.insert(
-                RETURN_PLACE,
-                CPlace::Addr(ret_param.unwrap(), None, ret_layout),
-            );
-        }
     }
 
     for (local, arg_kind, ty) in func_params {
@@ -419,7 +396,7 @@ pub fn codegen_fn_prelude<'a, 'tcx: 'a>(
         fx.local_map.insert(local, place);
     }
 
-    for local in fx.mir.vars_and_temps_iter() {
+    for local in ::std::iter::once(RETURN_PLACE).chain(fx.mir.vars_and_temps_iter()) {
         let ty = fx.mir.local_decls[local].ty;
         let layout = fx.layout_of(ty);
 
@@ -592,7 +569,12 @@ pub fn codegen_call_inner<'a, 'tcx: 'a>(
 
 pub fn codegen_return(fx: &mut FunctionCx<impl Backend>) {
     match get_pass_mode(fx.tcx, fx.self_sig().abi, fx.return_type(), true) {
-        PassMode::NoPass | PassMode::ByRef => {
+        PassMode::NoPass => {
+            fx.bcx.ins().return_(&[]);
+        }
+        PassMode::ByRef => {
+            let ret_cval = fx.get_local_place(RETURN_PLACE).to_cvalue(fx);
+            CPlace::Addr(fx.ret_param.unwrap(), None, fx.layout_of(fx.return_type())).write_cvalue(fx, ret_cval);
             fx.bcx.ins().return_(&[]);
         }
         PassMode::ByVal(_) => {

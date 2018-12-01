@@ -621,6 +621,7 @@ pub struct FunctionCx<'a, 'tcx: 'a, B: Backend> {
 
     pub bcx: FunctionBuilder<'a>,
     pub ebb_map: HashMap<BasicBlock, Ebb>,
+    pub ret_param: Option<Value>,
     pub local_map: HashMap<Local, CPlace<'tcx>>,
 
     pub comments: HashMap<Inst, String>,
