@@ -71,7 +71,7 @@ fn trans_fn<'a, 'tcx: 'a>(
     let func_id = module
         .declare_function(&name, Linkage::Export, &sig)
         .unwrap();
-    let mut debug_context = debug.map(|debug| FunctionDebugContext::new(tcx, debug, mir, &name, &sig));
+    let mut debug_context = debug.map(|debug| FunctionDebugContext::new(tcx, debug, mir, func_id, &name, &sig));
 
     // Step 3. Make FunctionBuilder
     let mut func = Function::with_name_signature(ExternalName::user(0, 0), sig);
