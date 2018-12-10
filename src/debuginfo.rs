@@ -5,7 +5,7 @@ use crate::prelude::*;
 use gimli::write::{
     Address, AttributeValue, DebugAbbrev, DebugInfo, DebugLine, DebugStr, EndianVec, Result, SectionId,
     StringTable, UnitEntryId, UnitId, UnitTable, Writer, CompilationUnit,
-    LineNumberProgramTable, LineNumberProgram, LineNumberProgramId, FileEntry, DirectoryEntry,
+    LineProgramTable, LineProgram, LineProgramId,
 };
 use gimli::Format;
 
@@ -13,8 +13,8 @@ use gimli::Format;
 use gimli::NativeEndian;
 
 pub struct DebugContext {
-    line_programs: LineNumberProgramTable,
-    line_program_id: LineNumberProgramId,
+    line_programs: LineProgramTable,
+    line_program_id: LineProgramId,
     strings: StringTable,
     units: UnitTable,
     unit_id: UnitId,
@@ -29,7 +29,7 @@ impl DebugContext {
     pub fn new(tcx: TyCtxt, address_size: u8, module: &mut Module<impl Backend + 'static>) -> Self {
         let mut units = UnitTable::default();
         let mut strings = StringTable::default();
-        let mut line_programs = LineNumberProgramTable::default();
+        let mut line_programs = LineProgramTable::default();
         // TODO: this should be configurable
         let version = 4;
         let unit_id = units.add(CompilationUnit::new(version, address_size, Format::Dwarf32));
@@ -44,6 +44,18 @@ impl DebugContext {
             };
             let comp_dir = tcx.sess.working_dir.0.to_string_lossy().as_bytes().to_vec();
 
+            line_program_id = line_programs.add(LineProgram::new(
+                version,
+                address_size,
+                Format::Dwarf32,
+                // FIXME: get constants from somewhere
+                1, 1, -5, 14,
+                &comp_dir,
+                &name,
+                // FIXME (FileInfo)
+                None,
+            ));
+
             let unit = units.get_mut(unit_id);
             let root = unit.root();
             let root = unit.get_mut(root);
@@ -55,26 +67,9 @@ impl DebugContext {
                 gimli::DW_AT_language,
                 AttributeValue::Language(gimli::DW_LANG_Rust),
             );
-            root.set(gimli::DW_AT_name, AttributeValue::StringRef(strings.add(&*name)));
-            root.set(gimli::DW_AT_comp_dir, AttributeValue::StringRef(strings.add(&*comp_dir)));
-            line_program_id = line_programs.add(LineNumberProgram::new(
-                version,
-                address_size,
-                Format::Dwarf32,
-                // FIXME: get constants from somewhere
-                1, 1, -5, 14,
-                DirectoryEntry {
-                    path: comp_dir,
-                },
-                FileEntry {
-                    path: name,
-                    directory: Default::default(),
-                    // FIXME
-                    last_modification: 0,
-                    length: 0,
-                },
-            ));
-            root.set(gimli::DW_AT_stmt_list, AttributeValue::LineNumberProgramRef(line_program_id));
+            root.set(gimli::DW_AT_name, AttributeValue::StringRef(strings.add(name)));
+            root.set(gimli::DW_AT_comp_dir, AttributeValue::StringRef(strings.add(comp_dir)));
+            root.set(gimli::DW_AT_stmt_list, AttributeValue::LineProgramRef(line_program_id));
             // FIXME: DW_AT_low_pc
             // FIXME: DW_AT_ranges
         }
@@ -189,9 +184,10 @@ impl<'a> FunctionDebugContext<'a> {
         let loc = tcx.sess.source_map().lookup_char_pos(span.lo());
         // FIXME: use file index into unit's line table
         // FIXME: specify directory too?
-        let file_id = debug_context.strings.add(loc.file.name.to_string());
+        let line_program = debug_context.line_programs.get_mut(debug_context.line_program_id);
+        let file_id = line_program.add_file(loc.file.name.to_string().as_bytes(), line_program.default_directory(), None);
         entry.set(gimli::DW_AT_linkage_name, AttributeValue::StringRef(name_id));
-        entry.set(gimli::DW_AT_decl_file, AttributeValue::StringRef(file_id));
+        entry.set(gimli::DW_AT_decl_file, AttributeValue::FileIndex(file_id));
         entry.set(gimli::DW_AT_decl_line, AttributeValue::Udata(loc.line as u64));
         // FIXME: probably omit this
         entry.set(gimli::DW_AT_decl_column, AttributeValue::Udata(loc.col.to_usize() as u64));
@@ -211,10 +207,12 @@ impl<'a> FunctionDebugContext<'a> {
         context: &Context,
         spans: &[Span],
     ) {
-        let set_loc = |line_program: &mut LineNumberProgram, span: Span| {
+        let set_loc = |line_program: &mut LineProgram, span: Span| {
             let loc = tcx.sess.source_map().lookup_char_pos(span.lo());
+            // FIXME: directory
             let file = loc.file.name.to_string();
-            // FIXME: set file
+            let file_id = line_program.add_file(file.as_bytes(), line_program.default_directory(), None);
+            line_program.row().file = file_id;
             line_program.row().line = loc.line as u64;
             line_program.row().column = loc.col.to_usize() as u64;
         };
