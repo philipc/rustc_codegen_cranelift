@@ -9,7 +9,7 @@ use rustc::session::config::{DebugInfo, OutputType};
 use rustc_codegen_ssa::back::linker::LinkerInfo;
 use rustc_codegen_ssa::CrateInfo;
 
-use cranelift_faerie::*;
+use cranelift_object::*;
 
 use crate::prelude::*;
 
@@ -102,11 +102,11 @@ fn run_aot(
     log: &mut Option<File>,
 ) -> Box<CodegenResults> {
     let new_module = |name: String| {
-        let module: Module<FaerieBackend> = Module::new(
-            FaerieBuilder::new(
+        let module: Module<ObjectBackend> = Module::new(
+            ObjectBuilder::new(
                 crate::build_isa(tcx.sess),
                 name + ".o",
-                FaerieTrapCollection::Disabled,
+                ObjectTrapCollection::Disabled,
                 cranelift_module::default_libcall_names(),
             )
             .unwrap(),
@@ -117,19 +117,19 @@ fn run_aot(
 
     let emit_module = |name: &str,
                        kind: ModuleKind,
-                       mut module: Module<FaerieBackend>,
+                       mut module: Module<ObjectBackend>,
                        debug: Option<DebugContext>| {
         module.finalize_definitions();
-        let mut artifact = module.finish().artifact;
+        let mut product = module.finish();
 
         if let Some(mut debug) = debug {
-            debug.emit(&mut artifact);
+            debug.emit(&mut product);
         }
 
         let tmp_file = tcx
             .output_filenames(LOCAL_CRATE)
             .temp_path(OutputType::Object, Some(name));
-        let obj = artifact.emit().unwrap();
+        let obj = product.emit().unwrap();
         std::fs::write(&tmp_file, obj).unwrap();
         CompiledModule {
             name: name.to_string(),
@@ -140,7 +140,7 @@ fn run_aot(
         }
     };
 
-    let mut faerie_module = new_module("some_file".to_string());
+    let mut object_module = new_module("some_file".to_string());
 
     let mut debug = if tcx.sess.opts.debuginfo != DebugInfo::None
         // macOS debuginfo doesn't work yet (see #303)
@@ -148,14 +148,14 @@ fn run_aot(
     {
         let debug = DebugContext::new(
             tcx,
-            faerie_module.target_config().pointer_type().bytes() as u8,
+            object_module.target_config().pointer_type().bytes() as u8,
         );
         Some(debug)
     } else {
         None
     };
 
-    codegen_cgus(tcx, &mut faerie_module, &mut debug, log);
+    codegen_cgus(tcx, &mut object_module, &mut debug, log);
 
     tcx.sess.abort_if_errors();
 
@@ -175,15 +175,17 @@ fn run_aot(
             .as_str()
             .to_string();
 
-        let mut metadata_artifact =
-            faerie::Artifact::new(crate::build_isa(tcx.sess).triple().clone(), metadata_cgu_name.clone());
-        crate::metadata::write_metadata(tcx, &mut metadata_artifact);
+        let triple = crate::build_isa(tcx.sess).triple().clone();
+        let mut metadata_object = 
+            object::write::Object::new(triple.binary_format, triple.architecture);
+        metadata_object.add_file_symbol(metadata_cgu_name.as_bytes().to_vec());
+        crate::metadata::write_metadata(tcx, &mut metadata_object);
 
         let tmp_file = tcx
             .output_filenames(LOCAL_CRATE)
             .temp_path(OutputType::Metadata, Some(&metadata_cgu_name));
 
-        let obj = metadata_artifact.emit().unwrap();
+        let obj = metadata_object.write().unwrap();
         std::fs::write(&tmp_file, obj).unwrap();
 
         Some(CompiledModule {
@@ -202,7 +204,7 @@ fn run_aot(
         modules: vec![emit_module(
             "dummy_name",
             ModuleKind::Regular,
-            faerie_module,
+            object_module,
             debug,
         )],
         allocator_module: if created_alloc_shim {

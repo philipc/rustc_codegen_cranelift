@@ -10,7 +10,9 @@ use gimli::write::{
 };
 use gimli::{Encoding, Format, LineEncoding, RunTimeEndian, SectionId};
 
-use faerie::*;
+use object::{SectionKind, RelocationKind, RelocationEncoding};
+use object::write::*;
+use cranelift_object::*;
 
 fn target_endian(tcx: TyCtxt) -> RunTimeEndian {
     use rustc::ty::layout::Endian;
@@ -73,18 +75,9 @@ enum DebugRelocName {
     Symbol(usize),
 }
 
-impl DebugReloc {
-    fn name<'a>(&self, ctx: &'a DebugContext) -> &'a str {
-        match self.name {
-            DebugRelocName::Section(id) => id.name(),
-            DebugRelocName::Symbol(index) => ctx.symbols.get_index(index).unwrap(),
-        }
-    }
-}
-
 pub struct DebugContext<'tcx> {
     endian: RunTimeEndian,
-    symbols: indexmap::IndexSet<String>,
+    symbols: indexmap::IndexSet<FuncId>,
 
     dwarf: DwarfUnit,
     unit_range_list: RangeList,
@@ -181,7 +174,7 @@ impl<'tcx> DebugContext<'tcx> {
         );
     }
 
-    pub fn emit(&mut self, artifact: &mut Artifact) {
+    pub fn emit(&mut self, product: &mut ObjectProduct) {
         let unit_range_list_id = self.dwarf.unit.ranges.add(self.unit_range_list.clone());
         let root = self.dwarf.unit.root();
         let root = self.dwarf.unit.get_mut(root);
@@ -193,30 +186,39 @@ impl<'tcx> DebugContext<'tcx> {
         let mut sections = Sections::new(WriterRelocate::new(self));
         self.dwarf.write(&mut sections).unwrap();
 
+        let mut map = HashMap::new();
         let _: Result<()> = sections.for_each_mut(|id, section| {
             if !section.writer.slice().is_empty() {
-                artifact
-                    .declare_with(id.name(), Decl::section(SectionKind::Debug), section.writer.take())
-                    .unwrap();
+                let segment = product.object.segment_name(StandardSegment::Debug).to_vec();
+                let name = id.name().as_bytes().to_vec();
+                let data = section.writer.take();
+                let section_id = product.object.add_section(segment, name, SectionKind::Debug);
+                product.object.section_mut(section_id).set_data(data, 1);
+                let symbol_id = product.object.section_symbol(section_id);
+                map.insert(id, (section_id, symbol_id));
             }
             Ok(())
         });
 
         let _: Result<()> = sections.for_each(|id, section| {
-            for reloc in &section.relocs {
-                artifact
-                    .link_with(
-                        faerie::Link {
-                            from: id.name(),
-                            to: reloc.name(self),
-                            at: u64::from(reloc.offset),
-                        },
-                        faerie::Reloc::Debug {
-                            size: reloc.size,
-                            addend: reloc.addend as i32,
-                        },
-                    )
-                    .expect("faerie relocation error");
+            if let Some((section_id, _)) = map.get(&id) {
+                for reloc in &section.relocs {
+                    let symbol = match reloc.name {
+                        DebugRelocName::Section(id) => map.get(&id).unwrap().1,
+                        DebugRelocName::Symbol(id) => {
+                            let func_id = *self.symbols.get_index(id).unwrap();
+                            product.function_symbol(func_id)
+                        }
+                    };
+                    product.object.add_relocation(*section_id, Relocation {
+                        offset: u64::from(reloc.offset),
+                        symbol,
+                        kind: RelocationKind::Absolute,
+                        encoding: RelocationEncoding::Generic,
+                        size: reloc.size * 8,
+                        addend: reloc.addend,
+                    }).unwrap();
+                }
             }
             Ok(())
         });
@@ -235,10 +237,11 @@ impl<'a, 'tcx> FunctionDebugContext<'a, 'tcx> {
         tcx: TyCtxt<'tcx>,
         debug_context: &'a mut DebugContext<'tcx>,
         mir: &Body,
+        func_id: FuncId,
         name: &str,
         _sig: &Signature,
     ) -> Self {
-        let (symbol, _) = debug_context.symbols.insert_full(name.to_string());
+        let (symbol, _) = debug_context.symbols.insert_full(func_id);
 
         // FIXME: add to appropriate scope intead of root
         let scope = debug_context.dwarf.unit.root();

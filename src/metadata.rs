@@ -50,7 +50,7 @@ impl MetadataLoader for CraneliftMetadataLoader {
 // Adapted from https://github.com/rust-lang/rust/blob/da573206f87b5510de4b0ee1a9c044127e409bd3/src/librustc_codegen_llvm/base.rs#L47-L112
 pub fn write_metadata(
     tcx: TyCtxt<'_>,
-    artifact: &mut faerie::Artifact
+    object: &mut object::write::Object
 ) -> EncodedMetadata {
     use std::io::Write;
     use flate2::Compression;
@@ -90,17 +90,23 @@ pub fn write_metadata(
     DeflateEncoder::new(&mut compressed, Compression::fast())
         .write_all(&metadata.raw_data).unwrap();
 
-    artifact.declare(".rustc", faerie::Decl::section(faerie::SectionKind::Data)).unwrap();
-    artifact.define_with_symbols(".rustc", compressed, {
-        let mut map = std::collections::BTreeMap::new();
-        // FIXME implement faerie elf backend section custom symbols
-        // For MachO this is necessary to prevent the linker from throwing away the .rustc section,
-        // but for ELF it isn't.
-        if tcx.sess.target.target.options.is_like_osx {
-            map.insert(rustc::middle::exported_symbols::metadata_symbol_name(tcx), 0);
-        }
-        map
-    }).unwrap();
+    let segment = object.segment_name(object::write::StandardSegment::Data).to_vec();
+    let section_id = object.add_section(segment, b".rustc".to_vec(), object::SectionKind::Data);
+    let offset = object.append_section_data(section_id, &compressed, 1);
+    // FIXME implement faerie elf backend section custom symbols
+    // For MachO this is necessary to prevent the linker from throwing away the .rustc section,
+    // but for ELF it isn't.
+    if tcx.sess.target.target.options.is_like_osx {
+        object.add_symbol(object::write::Symbol {
+            name: rustc::middle::exported_symbols::metadata_symbol_name(tcx).into_bytes(),
+            value: offset,
+            size: compressed.len() as u64,
+            kind: object::SymbolKind::Data,
+            scope: object::SymbolScope::Compilation,
+            weak: false,
+            section: Some(section_id),
+        });
+    }
 
     metadata
 }

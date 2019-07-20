@@ -1,6 +1,8 @@
 #!/bin/bash
 source config.sh
 
+set -x
+
 rm -r target/out || true
 mkdir -p target/out/clif
 
