@@ -2,9 +2,11 @@ set -e
 
 unamestr=`uname`
 if [[ "$unamestr" == 'Linux' ]]; then
-   dylib_ext='so'
+   dylib='librustc_codegen_cranelift.so'
 elif [[ "$unamestr" == 'Darwin' ]]; then
-   dylib_ext='dylib'
+   dylib='librustc_codegen_cranelift.dylib'
+elif [[ "$unamestr" == 'MINGW64_NT-10.0' ]]; then
+   dylib='rustc_codegen_cranelift.dll'
 else
    echo "Unsupported os"
    exit 1
@@ -12,7 +14,8 @@ fi
 
 TARGET_TRIPLE=$(rustc -vV | grep host | cut -d: -f2 | tr -d " ")
 
-export RUSTFLAGS='-Cpanic=abort -Cdebuginfo=2 -Zpanic-abort-tests -Zcodegen-backend='$(pwd)'/target/'$CHANNEL'/librustc_codegen_cranelift.'$dylib_ext' --sysroot '$(pwd)'/build_sysroot/sysroot'
+export RUSTFLAGS='-Cpanic=abort -Cdebuginfo=2 -Zpanic-abort-tests -Zcodegen-backend='$(pwd -W)'/target/'$CHANNEL'/'$dylib' --sysroot '$(pwd)'/build_sysroot/sysroot'
+#export RUSTFLAGS='-Cpanic=abort -Cdebuginfo=2 -Zpanic-abort-tests --sysroot '$(pwd)'/build_sysroot/sysroot'
 RUSTC="rustc $RUSTFLAGS -L crate=target/out --out-dir target/out"
 export RUSTC_LOG=warn # display metadata load errors
 
