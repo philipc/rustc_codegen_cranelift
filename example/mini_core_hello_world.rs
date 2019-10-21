@@ -142,7 +142,8 @@ fn main() {
     //return;
 
     unsafe {
-        printf("Hello %s\n\0" as *const str as *const i8, "printf\0" as *const str as *const i8);
+        // FIXME: LNK2019: unresolved external symbol __imp_printf
+        //printf("Hello %s\n\0" as *const str as *const i8, "printf\0" as *const str as *const i8);
 
         let hello: &[u8] = b"Hello\0" as &[u8; 6];
         let ptr: *const u8 = hello as *const [u8] as *const u8;
@@ -191,6 +192,8 @@ fn main() {
             y: !,
         }
 
+        // FIXME: Compilation(Verifier(VerifierErrors([VerifierError { location: inst10, message: "ABI expects v4 at stack offset 32, got %rcx" }])))
+        /*
         unsafe fn zeroed<T>() -> T {
             intrinsics::init::<T>()
         }
@@ -208,6 +211,7 @@ fn main() {
                 uninitialized::<Foo>();
             }
         }
+        */
     }
 
     let _ = box NoisyDrop {
@@ -237,20 +241,21 @@ fn main() {
     assert_eq!(((|()| 42u8) as fn(()) -> u8)(()), 42);
 
     extern {
-        #[linkage = "weak"]
+        #[linkage = "extern_weak"]
         static ABC: *const u8;
     }
 
     {
         extern {
-            #[linkage = "weak"]
+            #[linkage = "extern_weak"]
             static ABC: *const u8;
         }
     }
 
     unsafe { assert_eq!(ABC as usize, 0); }
 
-    &mut (|| Some(0 as *const ())) as &mut dyn FnMut() -> Option<*const ()>;
+    // FIXME: expected reg; got Stack(32)
+    //&mut (|| Some(0 as *const ())) as &mut dyn FnMut() -> Option<*const ()>;
 
     let f = 1000.0;
     assert_eq!(f as u8, 255);

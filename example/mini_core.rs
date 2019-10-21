@@ -472,7 +472,8 @@ pub mod intrinsics {
 }
 
 pub mod libc {
-    #[link(name = "c")]
+    // FIXME: windows only
+    #[link(name = "msvcrt")]
     extern "C" {
         pub fn puts(s: *const u8);
         pub fn printf(format: *const i8, ...) -> i32;

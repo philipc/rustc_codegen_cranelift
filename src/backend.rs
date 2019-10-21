@@ -134,17 +134,19 @@ impl WriteDebugInfo for ObjectProduct {
         from: &Self::SectionId,
         reloc: &DebugReloc,
     ) {
-        let symbol = match reloc.name {
-            DebugRelocName::Section(id) => section_map.get(&id).unwrap().1,
+        let (kind, symbol) = match reloc.name {
+            DebugRelocName::Section(id) => {
+                (RelocationKind::SectionOffset, section_map.get(&id).unwrap().1)
+            }
             DebugRelocName::Symbol(id) => {
                 let (_func_name, func_id) = symbol_map.get_index(id).unwrap();
-                self.function_symbol(*func_id)
+                (RelocationKind::Absolute, self.function_symbol(*func_id))
             }
         };
         self.object.add_relocation(from.0, Relocation {
             offset: u64::from(reloc.offset),
             symbol,
-            kind: RelocationKind::Absolute,
+            kind,
             encoding: RelocationEncoding::Generic,
             size: reloc.size * 8,
             addend: reloc.addend,

@@ -187,6 +187,8 @@ fn run_aot(
     let mut debug = if tcx.sess.opts.debuginfo != DebugInfo::None
         // macOS debuginfo doesn't work yet (see #303)
         && !tcx.sess.target.target.options.is_like_osx
+        // FIXME: windows relocations are wrong
+        && false
     {
         let debug = DebugContext::new(
             tcx,

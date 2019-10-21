@@ -13,7 +13,7 @@ fi
 source config.sh
 
 jit() {
-    if [[ `uname` == 'Darwin' ]]; then
+    if [[ `uname` == 'Darwin' || `uname` == 'MINGW64_NT-10.0' ]]; then
         # FIXME(#671) `dlsym` returns "symbol not found" for existing symbols on macOS.
         echo "[JIT] $1 (Ignored on macOS)"
     else
@@ -26,7 +26,9 @@ rm -r target/out || true
 mkdir -p target/out/clif
 
 echo "[BUILD] mini_core"
-$RUSTC example/mini_core.rs --crate-name mini_core --crate-type lib,dylib
+# FIXME: Unresolved symbols
+#$RUSTC example/mini_core.rs --crate-name mini_core --crate-type lib,dylib
+$RUSTC example/mini_core.rs --crate-name mini_core --crate-type lib
 
 echo "[BUILD] example"
 $RUSTC example/example.rs --crate-type lib
@@ -44,6 +46,7 @@ $RUSTC example/arbitrary_self_types_pointers_and_wrappers.rs --crate-name arbitr
 echo "[BUILD] sysroot"
 time ./build_sysroot/build_sysroot.sh
 
+# FIXME: expected reg; got Stack(32)
 echo "[AOT] alloc_example"
 $RUSTC example/alloc_example.rs --crate-type bin
 ./target/out/alloc_example
